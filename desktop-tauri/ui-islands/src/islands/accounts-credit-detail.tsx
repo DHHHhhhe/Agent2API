@@ -528,12 +528,12 @@ export function CreditDetailButton({ rows, subscriptionLine, variant, kind, titl
             <>
               <div className='usage-pop-soon'>
                 {expiring.todayCount > 0
-                  ? t('即将过期 {n} 积分（7 天内 · {c} 份，其中今天内 {d}）', {
+                  ? t('即将过期 {n} 积分（7 天内 {c} 份，今天内 {d}）', {
                     n: numberText(expiring.sum),
                     c: expiring.count,
                     d: numberText(expiring.todaySum),
                   })
-                  : t('即将过期 {n} 积分（7 天内 · {c} 份）', {
+                  : t('即将过期 {n} 积分（7 天内 {c} 份）', {
                     n: numberText(expiring.sum), c: expiring.count,
                   })}
               </div>

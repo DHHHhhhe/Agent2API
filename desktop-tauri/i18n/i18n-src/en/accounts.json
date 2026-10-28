@@ -858,7 +858,7 @@
   "失败后允许换号": "Allow account switching after failure",
   "关闭后，该账号转发失败时返回本次错误，不再顺延其他账号。禁用、无凭证和限制器等保护仍生效。": "When off, forwarding failures on this account return the error without switching to another account. Disabled-account, missing-credential, and limiter protections still apply.",
   "7天 {n}": "{n} in 7d",
-  "即将过期 {n} 积分（7 天内 · {c} 份）": "{n} credits expiring within 7 days ({c} packs)",
+  "即将过期 {n} 积分（7 天内 {c} 份）": "{n} credits expiring within 7 days ({c} packs)",
   "今天到期": "Expires today",
   "明天到期": "Expires tomorrow",
   "{days} 天后到期": "Expires in {days} days",
@@ -869,5 +869,5 @@
   "{hours} 小时后到期": "Expires in {hours} h",
   "{minutes} 分钟后到期": "Expires in {minutes} min",
   "（今天内 {d}）": " ({d} today)",
-  "即将过期 {n} 积分（7 天内 · {c} 份，其中今天内 {d}）": "{n} credits expiring within 7 days ({c} packs, {d} of them today)"
+  "即将过期 {n} 积分（7 天内 {c} 份，今天内 {d}）": "{n} credits expiring within 7 days ({c} packs, {d} of them today)"
 }
