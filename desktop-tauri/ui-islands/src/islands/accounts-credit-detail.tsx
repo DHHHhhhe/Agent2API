@@ -128,6 +128,10 @@ export type ExpiringSoon = {
   sum: number
   /** 份数 */
   count: number
+  /** 其中**今天内**（自然日）到期的份数 */
+  todayCount: number
+  /** 其中今天内到期的剩余之和 —— 这才是「今天必须花掉」的那笔 */
+  todaySum: number
 }
 
 /**
@@ -136,32 +140,68 @@ export type ExpiringSoon = {
  * 判据全部复用行上已经算好的位（`soon` / `remain`），不重算一遍：
  * 「什么算即将过期」只在 `creditRowsOf` 里有一处定义。
  *
+ * 另外单独汇总**今天内**（今天 24 点前）到期的那部分：7 天是「该安排了」，
+ * 今天内是「今天不花就没了」，两件事紧急程度差一个数量级，摊在一个数里会
+ * 把最急的那笔藏起来。口径按自然日（跨零点不算今天），与行首标签同一判据。
+ *
  * 这里**不改行序**。置顶是渲染时的分组（见 `CreditDetailButton`），不是排序：
  * 后端各家都按自己的口径排好了（见 `creditRowsOf` 头那段），前端再排一次只会
  * 让两处的口径分叉。
  */
-export function expiringSoonOf(rows: CreditRow[]): ExpiringSoon {
+export function expiringSoonOf(rows: CreditRow[], now: number = Date.now()): ExpiringSoon {
   const soon = rows.filter(row => row.soon)
   const sum = soon.reduce((total, row) => total + (row.remain ?? 0), 0)
-  return { rows: soon, sum: Number(sum.toFixed(2)), count: soon.length }
+  const endOfToday = (() => {
+    const date = new Date(now)
+    date.setHours(23, 59, 59, 999)
+    return date.getTime()
+  })()
+  const today = soon.filter(row => row.expireAt !== null && row.expireAt <= endOfToday)
+  const todaySum = today.reduce((total, row) => total + (row.remain ?? 0), 0)
+  return {
+    rows: soon,
+    sum: Number(sum.toFixed(2)),
+    count: soon.length,
+    todayCount: today.length,
+    todaySum: Number(todaySum.toFixed(2)),
+  }
 }
 
 /**
- * 到期还剩几个自然日 → 行首那枚标签（`今天到期` / `明天到期` / `N 天后到期`）。
+ * 到期还剩多久 → 行首那枚标签。
  *
- * 按**自然日**算而不是「小时数 ÷ 24」：明天凌晨到期的包，按小时算会落成
- * 「今天到期」，读起来像已经要作废了。日历口径与用户看的日期对得上。
+ * 两档口径，按自然日切：
+ *   · **今天内**（今天 24 点前）：细到 `N 小时后到期`，不足一小时给 `M 分钟后到期`
+ *     —— 这一档是「今天不花就没了」，小时数才有决策价值；
+ *   · 明天及以后：`明天到期` / `N 天后到期`。
+ *
+ * 为什么不一概用小时：明天凌晨到期的包按小时算是「5 小时」，但用户心里的日历
+ * 是「明天」，两种口径混在一个标签里只会让人反复换算。
  */
-export function daysLeftLabel(expireAt: number | null): string {
+export function daysLeftLabel(expireAt: number | null, now: number = Date.now()): string {
   if (expireAt === null || expireAt <= 0) return ''
   const target = new Date(expireAt)
   if (Number.isNaN(target.getTime())) return ''
-  const today = new Date()
+  const left = expireAt - now
+  if (!Number.isFinite(left) || left <= 0) return ''
+  const today = new Date(now)
+  if (
+    target.getFullYear() === today.getFullYear()
+    && target.getMonth() === today.getMonth()
+    && target.getDate() === today.getDate()
+  ) {
+    const hours = Math.floor(left / 3_600_000)
+    if (hours < 1) {
+      // 不足一小时就别再拆成秒：`1 分钟后到期` 在最后一分钟里是准确的
+      const minutes = Math.max(1, Math.floor(left / 60_000))
+      return t('{minutes} 分钟后到期', { minutes })
+    }
+    return t('{hours} 小时后到期', { hours })
+  }
   const dayOf = (date: Date): number =>
     Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
   const days = Math.round((dayOf(target) - dayOf(today)) / 86_400_000)
-  if (days <= 0) return t('今天到期')
-  if (days === 1) return t('明天到期')
+  if (days <= 1) return t('明天到期')
   return t('{days} 天后到期', { days })
 }
 
@@ -487,9 +527,15 @@ export function CreditDetailButton({ rows, subscriptionLine, variant, kind, titl
           {expiring.count > 0 ? (
             <>
               <div className='usage-pop-soon'>
-                {t('即将过期 {n} 积分（7 天内 · {c} 份）', {
-                  n: numberText(expiring.sum), c: expiring.count,
-                })}
+                {expiring.todayCount > 0
+                  ? t('即将过期 {n} 积分（7 天内 · {c} 份，其中今天内 {d}）', {
+                    n: numberText(expiring.sum),
+                    c: expiring.count,
+                    d: numberText(expiring.todaySum),
+                  })
+                  : t('即将过期 {n} 积分（7 天内 · {c} 份）', {
+                    n: numberText(expiring.sum), c: expiring.count,
+                  })}
               </div>
               {expiring.rows.map((row, index) => (
                 <CreditRowView key={`soon-${row.name}-${index}`} row={row} />

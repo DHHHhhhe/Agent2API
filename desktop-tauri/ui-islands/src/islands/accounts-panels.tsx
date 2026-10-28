@@ -1368,7 +1368,13 @@ export function UsageCell({ account }: { account: AccountRecord }) {
   const expiringRows = rawSummary.kind === 'ok' || rawSummary.kind === 'warn' ? creditRowsOf(entry) : []
   const expiring = expiringSoonOf(expiringRows)
   const summary = expiring.count
-    ? { ...rawSummary, title: rawSummary.title + t(' · 7 天内到期 {n}', { n: numberText(expiring.sum) }) }
+    ? {
+      ...rawSummary,
+      title: rawSummary.title
+        + t(' · 7 天内到期 {n}', { n: numberText(expiring.sum) })
+        // 今天内到期的那部分单独报一句：7 天是「该安排了」，今天内是「今天不花就没了」
+        + (expiring.todayCount > 0 ? t('（今天内 {d}）', { d: numberText(expiring.todaySum) }) : ''),
+    }
     : rawSummary
   // 限制器的跳过徽章：与后端选路过滤同一判据（balanceBlockedOf / tokenBlockedOf），
   // 让「为什么这个账号不接请求」在界面上有处可看。禁用档不标 —— 那一档

@@ -865,5 +865,9 @@
   " · 7 天内到期 {n}": " · {n} expiring within 7 days",
   "含即将过期 {n}": "incl. {n} expiring",
   "本组 7 天内到期、过期即作废的积分合计 {n}（{c} 个积分包）": "Credits in this group expiring within 7 days: {n} ({c} packs) — forfeited once expired",
-  "其中 {n} 积分将在 7 天内到期（{c} 份）": "{n} credits will expire within 7 days ({c} packs)"
+  "其中 {n} 积分将在 7 天内到期（{c} 份）": "{n} credits will expire within 7 days ({c} packs)",
+  "{hours} 小时后到期": "Expires in {hours} h",
+  "{minutes} 分钟后到期": "Expires in {minutes} min",
+  "（今天内 {d}）": " ({d} today)",
+  "即将过期 {n} 积分（7 天内 · {c} 份，其中今天内 {d}）": "{n} credits expiring within 7 days ({c} packs, {d} of them today)"
 }
