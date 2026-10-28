@@ -84,6 +84,18 @@ export type CreditRow = {
    * 只有产出它的那一端知道它是哪一种。
    */
   amount: number | null
+  /** 到期时刻（毫秒）；上游没给就是 null —— 读不到就不谈「即将过期」，不替它编一个 */
+  expireAt: number | null
+  /** 剩余量（与 `view` 里那个数同源）；「即将过期」求和用，null = 没读到 */
+  remain: number | null
+  /**
+   * 落在「即将过期」窗口内、且还能花。
+   *
+   * 它**不参与排序**：行的先后次序照后端给的那份（见 `creditRowsOf` 头那段），
+   * 这个标记只决定「进弹层的哪一组」—— 即将过期的挑出来置顶成一组，其余行
+   * 保持原顺序逐行往下排（见 `CreditDetailButton`）。
+   */
+  soon: boolean
 }
 
 /**
@@ -97,6 +109,60 @@ function numberOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * 「即将过期」窗口：7 天。
+ *
+ * 与网关侧选号用的 `expiring_soon` 窗口同一口径 —— 账号页提示「这些积分快作废」
+ * 与后端「优先消耗快过期的包」说的应该是同一批钱，两边窗口不一致会让人以为
+ * 选路算错了。
+ */
+export const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000
+
+/** 弹层里置顶那一组的汇总（`expiringSoonOf` 的产物） */
+export type ExpiringSoon = {
+  /** 窗口内、还能花的那些包（保持后端给的相对顺序） */
+  rows: CreditRow[]
+  /** 这些包的剩余之和；没有这样的包时为 0 */
+  sum: number
+  /** 份数 */
+  count: number
+}
+
+/**
+ * 挑出窗口内即将过期的积分包并求和。
+ *
+ * 判据全部复用行上已经算好的位（`soon` / `remain`），不重算一遍：
+ * 「什么算即将过期」只在 `creditRowsOf` 里有一处定义。
+ *
+ * 这里**不改行序**。置顶是渲染时的分组（见 `CreditDetailButton`），不是排序：
+ * 后端各家都按自己的口径排好了（见 `creditRowsOf` 头那段），前端再排一次只会
+ * 让两处的口径分叉。
+ */
+export function expiringSoonOf(rows: CreditRow[]): ExpiringSoon {
+  const soon = rows.filter(row => row.soon)
+  const sum = soon.reduce((total, row) => total + (row.remain ?? 0), 0)
+  return { rows: soon, sum: Number(sum.toFixed(2)), count: soon.length }
+}
+
+/**
+ * 到期还剩几个自然日 → 行首那枚标签（`今天到期` / `明天到期` / `N 天后到期`）。
+ *
+ * 按**自然日**算而不是「小时数 ÷ 24」：明天凌晨到期的包，按小时算会落成
+ * 「今天到期」，读起来像已经要作废了。日历口径与用户看的日期对得上。
+ */
+export function daysLeftLabel(expireAt: number | null): string {
+  if (expireAt === null || expireAt <= 0) return ''
+  const target = new Date(expireAt)
+  if (Number.isNaN(target.getTime())) return ''
+  const today = new Date()
+  const dayOf = (date: Date): number =>
+    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+  const days = Math.round((dayOf(target) - dayOf(today)) / 86_400_000)
+  if (days <= 0) return t('今天到期')
+  if (days === 1) return t('明天到期')
+  return t('{days} 天后到期', { days })
 }
 
 /** 毫秒时间戳 → `MM-DD HH:mm`（年份在悬停的完整时刻里；取不出来给空串） */
@@ -171,6 +237,10 @@ export function creditRowsOf(entry: UsageEntry): CreditRow[] {
         // 流水恒不进「已用完 / 已过期」那组（见 CreditRow.spent）
         spent: false,
         amount,
+        expireAt,
+        // 流水没有「还剩多少」可言，也就不参与即将过期求和
+        remain: null,
+        soon: false,
       }
     }
 
@@ -215,6 +285,13 @@ export function creditRowsOf(entry: UsageEntry): CreditRow[] {
     const exhausted = (remain !== null && remain <= 0)
       || (remain === null && used !== null && hasTotal && used >= total)
     const spent = !unlimited && !daily && (exhausted || expired)
+
+    // ── 即将过期（弹层置顶组 + 余额格那枚徽标）──────────────────
+    // 三个条件缺一不可：读得到到期时刻、落在窗口内、这笔钱真的还能花（`spent`
+    // 已经把用完 / 已过期 / 每日重置 / 不限量这几档排掉了）。缺 `remain` 时不猜成
+    // 0 —— 它照样进那组（「会作废」这件事已经确定），只是不参与求和。
+    const soon = !spent
+      && expireAt !== null && expireAt > now && expireAt <= now + EXPIRING_SOON_MS
 
     // ── 领取 → 到期 ─────────────────────────────────────────
     // 左边那一半两个来源，**名字必须跟着来源变**：`grantAt`（上游的发放时刻）
@@ -261,7 +338,19 @@ export function creditRowsOf(entry: UsageEntry): CreditRow[] {
       percent === null && remain !== null ? t('上游未给总量，画不出剩余比例') : '',
       used !== null && total !== null ? t('已用 {used} / 共 {total}', { used: numberText(used), total: numberText(total) }) : '',
     ].filter(Boolean).join(' · ')
-    return { name, view, tone, percent, window: parts.length ? parts.join(' · ') : null, title, spent, amount: null }
+    return {
+      name,
+      view,
+      tone,
+      percent,
+      window: parts.length ? parts.join(' · ') : null,
+      title,
+      spent,
+      amount: null,
+      expireAt,
+      remain,
+      soon,
+    }
   })
 }
 
@@ -271,6 +360,8 @@ function CreditRowView({ row }: { row: CreditRow }) {
     <div className='usage-pop-row' title={row.title}>
       <div className='usage-pop-line'>
         <span className='usage-pop-name'>{row.name}</span>
+        {/* 只会出现在置顶那一组里（`row.soon` 就是分组判据），其余行照旧 */}
+        {row.soon ? <span className='usage-pop-soon-tag'>{daysLeftLabel(row.expireAt)}</span> : null}
         <span className={`usage-pop-view ${row.tone}`}>{row.view}</span>
       </div>
       {row.window ? <div className='usage-pop-window'>{row.window}</div> : null}
@@ -314,6 +405,15 @@ export function CreditDetailButton({ rows, subscriptionLine, variant, kind, titl
   const [spentOpen, setSpentOpen] = React.useState(false)
   const liveRows = rows.filter(row => !row.spent)
   const spentRows = rows.filter(row => row.spent)
+  /**
+   * 即将过期的那批：挑出来单独成组，**不动其余行的顺序**。
+   *
+   * `restRows` 逐字保持 `liveRows` 的相对次序（也就是后端给的那份），只把这批
+   * 「最该先花掉」的提到「积分明细」标题正下方并标出还剩几天。既有排序口径
+   * 归后端（见 `creditRowsOf` 头段），这里做的是分组，不是重排。
+   */
+  const expiring = expiringSoonOf(liveRows)
+  const restRows = liveRows.filter(row => !row.soon)
   const className = variant === 'pool' ? `usage-toggle usage-pool-line ${kind}` : `usage-toggle ${kind}`
 
   /**
@@ -369,6 +469,11 @@ export function CreditDetailButton({ rows, subscriptionLine, variant, kind, titl
           aria-label={t('积分明细')} />}
       >
         {variant === 'pool' ? children : <span className='val'>{children}</span>}
+        {/* 徽标只挂单行读数形态：pool 那行里已经有进度条与「剩 x / y」，再挤一枚
+            胶囊会把读数压成省略号（余额列一百多像素宽，见那段 CSS 注释） */}
+        {variant !== 'pool' && expiring.count > 0 ? (
+          <span className='usage-toggle-soon'>{t('7天 {n}', { n: numberText(expiring.sum) })}</span>
+        ) : null}
         <span className='caret' aria-hidden>▾</span>
       </PopoverTrigger>
       {/* `align='center'`：浮层以读数按钮为中心展开。原来是 'end'（右缘对齐），
@@ -379,7 +484,19 @@ export function CreditDetailButton({ rows, subscriptionLine, variant, kind, titl
         <div className='usage-pop-credit' ref={attachBox} tabIndex={-1}>
           {subscriptionLine ? <div className='usage-pop-sub'>{subscriptionLine}</div> : null}
           <div className='usage-pop-group'>{t('积分明细')}</div>
-          {liveRows.map((row, index) => <CreditRowView key={`${row.name}-${index}`} row={row} />)}
+          {expiring.count > 0 ? (
+            <>
+              <div className='usage-pop-soon'>
+                {t('即将过期 {n} 积分（7 天内 · {c} 份）', {
+                  n: numberText(expiring.sum), c: expiring.count,
+                })}
+              </div>
+              {expiring.rows.map((row, index) => (
+                <CreditRowView key={`soon-${row.name}-${index}`} row={row} />
+              ))}
+            </>
+          ) : null}
+          {restRows.map((row, index) => <CreditRowView key={`${row.name}-${index}`} row={row} />)}
           {spentRows.length > 0 ? (
             <div className='usage-pop-spent'>
               <Button size='default' variant='ghost'
